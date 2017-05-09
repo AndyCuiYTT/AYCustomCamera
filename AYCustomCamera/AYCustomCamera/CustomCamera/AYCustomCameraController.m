@@ -18,7 +18,7 @@
 #define kSCreen_Height [UIScreen mainScreen].bounds.size.height
 
 
-@interface AYCustomCameraController ()
+@interface AYCustomCameraController ()<UIGestureRecognizerDelegate>
 
 @property (nonatomic , strong)AVCaptureSession *captureSession;//
 
@@ -33,6 +33,10 @@
 @property (nonatomic , assign)BOOL flashFlag; //闪光灯开关
 
 @property (nonatomic , strong)UIButton *flashBtn;//用于是否显示
+
+@property (nonatomic , assign)CGFloat effectiveScale;
+
+@property (nonatomic , assign)CGFloat beginGestureScale;
 
 @end
 
@@ -71,6 +75,11 @@
 }
 
 - (void)ay_setLayoutSubviews{
+    
+    self.beginGestureScale = 1.0f;
+    UIPinchGestureRecognizer *pin = [[UIPinchGestureRecognizer alloc] initWithTarget:self action:@selector(handlePinchGesture:)];
+    pin.delegate = self;
+    [self.view addGestureRecognizer:pin];
     
     
     UIView *topView = [[UIView alloc] initWithFrame:CGRectMake(0, 0, kScreen_Width, 40)];
@@ -116,6 +125,8 @@
 - (void)ay_takePicture:(UIButton*)sender{
     self.view.userInteractionEnabled = NO;// 阻断按钮响应者链,否则会造成崩溃
     AVCaptureConnection *captureConnection = [self.captureStillImageOutput connectionWithMediaType:AVMediaTypeVideo];
+    [captureConnection setVideoScaleAndCropFactor:self.effectiveScale];
+    NSLog(@"%f",self.effectiveScale);
     if (captureConnection) {
         [self.captureStillImageOutput captureStillImageAsynchronouslyFromConnection:captureConnection completionHandler:^(CMSampleBufferRef imageDataSampleBuffer, NSError *error) {
            
@@ -278,6 +289,49 @@
         }
     }
     return nil;
+}
+
+
+//缩放手势 用于调整焦距
+- (void)handlePinchGesture:(UIPinchGestureRecognizer *)recognizer{
+    
+    BOOL allTouchesAreOnThePreviewLayer = YES;
+    NSUInteger numTouches = [recognizer numberOfTouches], i;
+    for ( i = 0; i < numTouches; ++i ) {
+        CGPoint location = [recognizer locationOfTouch:i inView:self.view];
+        CGPoint convertedLocation = [self.captureVideoPreviewLayer convertPoint:location fromLayer:self.captureVideoPreviewLayer.superlayer];
+        if ( ! [self.captureVideoPreviewLayer containsPoint:convertedLocation] ) {
+            allTouchesAreOnThePreviewLayer = NO;
+            break;
+        }
+    }
+    
+    if ( allTouchesAreOnThePreviewLayer ) {
+        self.effectiveScale = self.beginGestureScale * recognizer.scale;
+        if (self.effectiveScale < 1.0){
+            self.effectiveScale = 1.0;
+        }
+        
+        
+        CGFloat maxScaleAndCropFactor = [[self.captureStillImageOutput connectionWithMediaType:AVMediaTypeVideo] videoMaxScaleAndCropFactor];
+        if (self.effectiveScale > maxScaleAndCropFactor)
+            self.effectiveScale = maxScaleAndCropFactor;
+        
+        [CATransaction begin];
+        [CATransaction setAnimationDuration:.025];
+        [self.captureVideoPreviewLayer setAffineTransform:CGAffineTransformMakeScale(self.effectiveScale, self.effectiveScale)];
+        [CATransaction commit];
+        
+    }
+    
+}
+
+- (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)gestureRecognizer
+{
+    if ( [gestureRecognizer isKindOfClass:[UIPinchGestureRecognizer class]] ) {
+        self.beginGestureScale = self.effectiveScale;
+    }
+    return YES;
 }
 
 - (BOOL)prefersStatusBarHidden{
