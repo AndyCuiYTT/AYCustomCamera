@@ -28,8 +28,6 @@
 
 @property (nonatomic , strong)AVCaptureVideoPreviewLayer *captureVideoPreviewLayer;//显示相机拍摄到画面
 
-@property (nonatomic , strong)AVCaptureDevice *captureDevice;//输入设备
-
 @property (nonatomic , assign)BOOL flashFlag; //闪光灯开关
 
 @property (nonatomic , strong)UIButton *flashBtn;//用于是否显示
@@ -57,12 +55,16 @@
     [self ay_setLayoutSubviews];
     
     if ([UIImagePickerController isCameraDeviceAvailable:UIImagePickerControllerCameraDeviceRear]) {
-        if ([self.captureSession canAddInput:[self ay_getBackCameraInput]]) {
-            [self.captureSession addInput:[self ay_getBackCameraInput]];
+        AVCaptureDeviceInput *deviceInput = [self ay_getBackCameraInput];
+        if ([self.captureSession canAddInput:deviceInput]) {
+            _captureDeviceInput = deviceInput;
+            [self.captureSession addInput:deviceInput];
         }
     }else if ([UIImagePickerController isCameraDeviceAvailable:UIImagePickerControllerCameraDeviceFront]){
-        if ([self.captureSession canAddInput:[self ay_getFrontCameraInput]]) {
-            [self.captureSession addInput:[self ay_getFrontCameraInput]];
+        AVCaptureDeviceInput *deviceInput = [self ay_getBackCameraInput];
+        if ([self.captureSession canAddInput:deviceInput]) {
+            _captureDeviceInput = deviceInput;
+            [self.captureSession addInput:deviceInput];
         }
     }else{
         kShow_Alert(@"照相机不可用!");
@@ -76,7 +78,7 @@
 
 - (void)ay_setLayoutSubviews{
     
-    self.beginGestureScale = 1.0f;
+    self.effectiveScale = 1.0f;
     UIPinchGestureRecognizer *pin = [[UIPinchGestureRecognizer alloc] initWithTarget:self action:@selector(handlePinchGesture:)];
     pin.delegate = self;
     [self.view addGestureRecognizer:pin];
@@ -126,7 +128,6 @@
     self.view.userInteractionEnabled = NO;// 阻断按钮响应者链,否则会造成崩溃
     AVCaptureConnection *captureConnection = [self.captureStillImageOutput connectionWithMediaType:AVMediaTypeVideo];
     [captureConnection setVideoScaleAndCropFactor:self.effectiveScale];
-    NSLog(@"%f",self.effectiveScale);
     if (captureConnection) {
         [self.captureStillImageOutput captureStillImageAsynchronouslyFromConnection:captureConnection completionHandler:^(CMSampleBufferRef imageDataSampleBuffer, NSError *error) {
            
@@ -156,14 +157,14 @@
 - (void)ay_exchangeFlash:(UIButton*)sender{
     _flashFlag = !_flashFlag;
     NSError *error;
-    [self.captureDevice lockForConfiguration:&error];
-    if (!error && [_captureDevice hasFlash]) {
+    [self.captureDeviceInput.device lockForConfiguration:&error];
+    if (!error && [_captureDeviceInput.device hasFlash]) {
         if (_flashFlag) {
-            [self.captureDevice setFlashMode:AVCaptureFlashModeOn];
+            [self.captureDeviceInput.device setFlashMode:AVCaptureFlashModeOn];
         }else{
-            [self.captureDevice setFlashMode:AVCaptureFlashModeOff];
+            [self.captureDeviceInput.device setFlashMode:AVCaptureFlashModeOff];
         }
-        [self.captureDevice unlockForConfiguration];
+        [self.captureDeviceInput.device unlockForConfiguration];
         sender.selected = _flashFlag;
     }
 }
@@ -180,32 +181,36 @@
 
 
 - (void)ay_exchangeCareme:(UIButton*)sender{
-    AVCaptureDeviceInput *deviceInput = _captureDeviceInput;
-    AVCaptureDevice *device = _captureDevice;
-    if (_captureDevice.position == AVCaptureDevicePositionBack) {
+    AVCaptureDeviceInput *deviceInput;
+    if (_captureDeviceInput.device.position == AVCaptureDevicePositionBack) {
         
         if ([UIImagePickerController isCameraDeviceAvailable:UIImagePickerControllerCameraDeviceFront]) {
-            [self ay_getFrontCameraInput];
+            deviceInput = [self ay_getFrontCameraInput];
+        }else{
+            kShow_Alert(@"前置摄像头不可用");
         }
-    }else if(_captureDevice.position == AVCaptureDevicePositionFront){
+    }else if(_captureDeviceInput.device.position == AVCaptureDevicePositionFront){
         if ([UIImagePickerController isCameraDeviceAvailable:UIImagePickerControllerCameraDeviceRear]) {
-            [self ay_getBackCameraInput];
+            deviceInput = [self ay_getBackCameraInput];
+        }else{
+            kShow_Alert(@"后置摄像头不可用");
         }
     }
     if (deviceInput) {
         [self.captureSession beginConfiguration];
-        [self.captureSession removeInput:deviceInput];
-        if ([self.captureSession canAddInput:_captureDeviceInput]) {
-            [self.captureSession addInput:_captureDeviceInput];
-            if ([_captureDevice hasFlash]) {
+        [self.captureSession removeInput:_captureDeviceInput];
+        if ([self.captureSession canAddInput:deviceInput]) {
+            [self.captureSession addInput:deviceInput];
+            _captureDeviceInput = deviceInput;
+            if ([_captureDeviceInput.device hasFlash]) {
                 _flashBtn.hidden = NO;
             }else{
                 _flashBtn.hidden = YES;
             }
         }else{
-            [_captureSession addInput:deviceInput];
-            _captureDeviceInput = deviceInput;
-            _captureDevice = device;
+            if ([_captureSession canAddInput:_captureDeviceInput]) {
+                [_captureSession addInput:_captureDeviceInput];
+            }
         }
         [self.captureSession commitConfiguration];
     }
@@ -252,8 +257,6 @@
     AVCaptureDeviceInput *deviceInput = [[AVCaptureDeviceInput alloc] initWithDevice:[self ay_getCameraWithPosition:AVCaptureDevicePositionBack] error:&error];
     if (error) {
         NSLog(@"%@",error);
-    }else{
-        _captureDeviceInput = deviceInput;
     }
     return deviceInput;
 }
@@ -263,8 +266,6 @@
     AVCaptureDeviceInput *deviceInput = [[AVCaptureDeviceInput alloc] initWithDevice:[self ay_getCameraWithPosition:AVCaptureDevicePositionFront] error:&error];
     if (error) {
         NSLog(@"%@",error);
-    }else{
-        _captureDeviceInput = deviceInput;
     }
     return deviceInput;
 }
@@ -284,7 +285,6 @@
                 }
                 [device unlockForConfiguration];
             }
-            _captureDevice = device;
             return device;
         }
     }
